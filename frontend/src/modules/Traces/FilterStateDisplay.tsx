@@ -1,11 +1,9 @@
-import React from "react";
-import { Card, Tag as AntTag } from "antd";
-import { connect } from "react-redux";
-
-import styled from "styled-components";
-import { StoreState } from "../../store/reducers";
-import { TagItem, TraceFilters, updateTraceFilters } from "../../store/actions";
-
+import { Card, Tag as AntTag } from 'antd';
+import React from 'react';
+import { connect } from 'react-redux';
+import { TagItem, TraceFilters, updateTraceFilters } from 'store/actions';
+import { AppState } from 'store/reducers';
+import styled from 'styled-components';
 
 const Tag = styled(AntTag)`
 	.anticon {
@@ -16,28 +14,34 @@ const Tag = styled(AntTag)`
 
 interface FilterStateDisplayProps {
 	traceFilters: TraceFilters;
-	updateTraceFilters: Function;
+	updateTraceFilters: (props: TraceFilters) => void;
 }
 
-const _FilterStateDisplay = (props: FilterStateDisplayProps) => {
-	function handleCloseTag(value: string) {
-		if (value === "service")
-			props.updateTraceFilters({ ...props.traceFilters, service: "" });
-		if (value === "operation")
-			props.updateTraceFilters({ ...props.traceFilters, operation: "" });
-		if (value === "maxLatency")
-			props.updateTraceFilters({
-				...props.traceFilters,
-				latency: { max: "", min: props.traceFilters.latency?.min },
+const _FilterStateDisplay = (props: FilterStateDisplayProps): JSX.Element => {
+	const { traceFilters, updateTraceFilters } = props;
+
+	function handleCloseTag(value: string): void {
+		if (value === 'service') {
+			updateTraceFilters({ ...traceFilters, service: '' });
+		}
+		if (value === 'operation') {
+			updateTraceFilters({ ...traceFilters, operation: '' });
+		}
+		if (value === 'maxLatency') {
+			updateTraceFilters({
+				...traceFilters,
+				latency: { max: '', min: traceFilters.latency?.min || '' },
 			});
-		if (value === "minLatency")
-			props.updateTraceFilters({
-				...props.traceFilters,
-				latency: { min: "", max: props.traceFilters.latency?.max },
+		}
+		if (value === 'minLatency') {
+			updateTraceFilters({
+				...traceFilters,
+				latency: { min: '', max: traceFilters.latency?.max || '' },
 			});
+		}
 	}
 
-	function handleCloseTagElement(item: TagItem) {
+	function handleCloseTagElement(item: TagItem): void {
 		props.updateTraceFilters({
 			...props.traceFilters,
 			tags: props.traceFilters.tags?.filter((elem) => elem !== item),
@@ -48,54 +52,54 @@ const _FilterStateDisplay = (props: FilterStateDisplayProps) => {
 			style={{ padding: 6, marginTop: 10, marginBottom: 10 }}
 			bodyStyle={{ padding: 6 }}
 		>
-			{props.traceFilters.service === "" ||
+			{props.traceFilters.service === '' ||
 			props.traceFilters.operation === undefined ? null : (
 				<Tag
 					style={{ fontSize: 14, padding: 8 }}
 					closable
-					onClose={(e) => {
-						handleCloseTag("service");
+					onClose={(): void => {
+						handleCloseTag('service');
 					}}
 				>
 					service:{props.traceFilters.service}
 				</Tag>
 			)}
-			{props.traceFilters.operation === "" ||
+			{props.traceFilters.operation === '' ||
 			props.traceFilters.operation === undefined ? null : (
 				<Tag
 					style={{ fontSize: 14, padding: 8 }}
 					closable
-					onClose={(e) => {
-						handleCloseTag("operation");
+					onClose={(): void => {
+						handleCloseTag('operation');
 					}}
 				>
 					operation:{props.traceFilters.operation}
 				</Tag>
 			)}
 			{props.traceFilters.latency === undefined ||
-			props.traceFilters.latency?.min === "" ? null : (
+			props.traceFilters.latency?.min === '' ? null : (
 				<Tag
 					style={{ fontSize: 14, padding: 8 }}
 					closable
-					onClose={(e) => {
-						handleCloseTag("minLatency");
+					onClose={(): void => {
+						handleCloseTag('minLatency');
 					}}
 				>
 					minLatency:
-					{(parseInt(props.traceFilters.latency!.min) / 1000000).toString()}ms
+					{(parseInt(traceFilters?.latency?.min || '0') / 1000000).toString()}ms
 				</Tag>
 			)}
 			{props.traceFilters.latency === undefined ||
-			props.traceFilters.latency?.max === "" ? null : (
+			props.traceFilters.latency?.max === '' ? null : (
 				<Tag
 					style={{ fontSize: 14, padding: 8 }}
 					closable
-					onClose={(e) => {
-						handleCloseTag("maxLatency");
+					onClose={(): void => {
+						handleCloseTag('maxLatency');
 					}}
 				>
 					maxLatency:
-					{(parseInt(props.traceFilters.latency!.max) / 1000000).toString()}ms
+					{(parseInt(traceFilters?.latency?.max || '0') / 1000000).toString()}ms
 				</Tag>
 			)}
 			{props.traceFilters.tags === undefined
@@ -105,7 +109,7 @@ const _FilterStateDisplay = (props: FilterStateDisplayProps) => {
 							style={{ fontSize: 14, padding: 8 }}
 							closable
 							key={`${item.key}-${item.operator}-${item.value}`}
-							onClose={(e) => {
+							onClose={(): void => {
 								handleCloseTagElement(item);
 							}}
 						>
@@ -116,7 +120,7 @@ const _FilterStateDisplay = (props: FilterStateDisplayProps) => {
 	);
 };
 
-const mapStateToProps = (state: StoreState): { traceFilters: TraceFilters } => {
+const mapStateToProps = (state: AppState): { traceFilters: TraceFilters } => {
 	return { traceFilters: state.traceFilters };
 };
 

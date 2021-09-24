@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+type InstantQueryMetricsParams struct {
+	Time  time.Time
+	Query string
+	Stats string
+}
+
+type QueryRangeParams struct {
+	Start time.Time
+	End   time.Time
+	Step  time.Duration
+	Query string
+	Stats string
+}
+
 type GetTopEndpointsParams struct {
 	StartTime   string
 	EndTime     string

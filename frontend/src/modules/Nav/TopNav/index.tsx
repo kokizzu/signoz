@@ -1,14 +1,12 @@
-import React from "react";
-import { Row, Col } from "antd";
-import { useHistory } from "react-router-dom";
-import ROUTES from "Src/constants/routes";
+import { Col, Row } from 'antd';
+import ROUTES from 'constants/routes';
+import history from 'lib/history';
+import React from 'react';
 
-import DateTimeSelector from "./DateTimeSelector";
-import ShowBreadcrumbs from "./ShowBreadcrumbs";
+import DateTimeSelector from './DateTimeSelector';
+import ShowBreadcrumbs from './ShowBreadcrumbs';
 
-const TopNav = () => {
-	const history = useHistory();
-
+const TopNav = (): JSX.Element | null => {
 	if (history.location.pathname === ROUTES.SIGN_UP) {
 		return null;
 	}

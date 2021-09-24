@@ -1,70 +1,130 @@
-import React, { useEffect, useState } from "react";
-import { cloneDeep } from "lodash";
-import { Select as DefaultSelect, Button, Space, Form } from "antd";
-import styled from "styled-components";
-import { withRouter } from "react-router";
-import { getLocalStorageRouteKey } from "./utils";
-import { RouteComponentProps, useLocation } from "react-router-dom";
-import { connect } from "react-redux";
-import ROUTES from "Src/constants/routes";
-import CustomDateTimeModal from "./CustomDateTimeModal";
-import { GlobalTime, updateTimeInterval } from "../../../store/actions";
-import { StoreState } from "../../../store/reducers";
-import FormItem from "antd/lib/form/FormItem";
+import { Button, Form, Select as DefaultSelect, Space } from 'antd';
+import FormItem from 'antd/lib/form/FormItem';
+import { LOCAL_STORAGE } from 'constants/localStorage';
+import { METRICS_PAGE_QUERY_PARAM } from 'constants/query';
+import ROUTES from 'constants/routes';
+import history from 'lib/history';
+import { cloneDeep } from 'lodash';
+import moment from 'moment';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { connect } from 'react-redux';
+import { useLocation } from 'react-router-dom';
+import { GlobalTime, updateTimeInterval } from 'store/actions';
+import { DateTimeRangeType } from 'store/actions';
+import { AppState } from 'store/reducers';
+import styled from 'styled-components';
+
 import {
+	DefaultOptionsBasedOnRoute,
 	Options,
 	ServiceMapOptions,
-	DefaultOptionsBasedOnRoute,
-} from "./config";
-import { DateTimeRangeType } from "../../../store/actions";
-import { METRICS_PAGE_QUERY_PARAM } from "Src/constants/query";
-import { LOCAL_STORAGE } from "Src/constants/localStorage";
-import moment from "moment";
+} from './config';
+import CustomDateTimeModal from './CustomDateTimeModal';
+import { getLocalStorageRouteKey } from './utils';
 const { Option } = DefaultSelect;
 
 const DateTimeWrapper = styled.div`
 	margin-top: 20px;
 	justify-content: flex-end !important;
 `;
-const Select = styled(DefaultSelect)``;
-interface DateTimeSelectorProps extends RouteComponentProps<any> {
+interface DateTimeSelectorProps {
 	currentpath?: string;
-	updateTimeInterval: Function;
+	updateTimeInterval: (
+		interval: string,
+		datetimeRange?: [number, number],
+	) => void;
 	globalTime: GlobalTime;
 }
 
 /*
 This components is mounted all the time. Use event listener to track changes.
  */
-const _DateTimeSelector = (props: DateTimeSelectorProps) => {
+const _DateTimeSelector = (props: DateTimeSelectorProps): JSX.Element => {
 	const location = useLocation();
 	const LocalStorageRouteKey: string = getLocalStorageRouteKey(
 		location.pathname,
 	);
-	const timeDurationInLocalStorage =
-		JSON.parse(localStorage.getItem(LOCAL_STORAGE.METRICS_TIME_IN_DURATION)) ||
-		{};
+	const { globalTime, updateTimeInterval } = props;
+
+	const timeDurationInLocalStorage = useMemo(() => {
+		return (
+			JSON.parse(localStorage.getItem(LOCAL_STORAGE.METRICS_TIME_IN_DURATION)) ||
+			{}
+		);
+	}, []);
+
 	const options =
 		location.pathname === ROUTES.SERVICE_MAP ? ServiceMapOptions : Options;
 	let defaultTime = DefaultOptionsBasedOnRoute[LocalStorageRouteKey]
 		? DefaultOptionsBasedOnRoute[LocalStorageRouteKey]
 		: DefaultOptionsBasedOnRoute.default;
+
 	if (timeDurationInLocalStorage[LocalStorageRouteKey]) {
 		defaultTime = timeDurationInLocalStorage[LocalStorageRouteKey];
 	}
+
+	const getDefaultTime = useCallback(() => {
+		if (DefaultOptionsBasedOnRoute[LocalStorageRouteKey]) {
+			return DefaultOptionsBasedOnRoute[LocalStorageRouteKey];
+		}
+		if (timeDurationInLocalStorage[LocalStorageRouteKey]) {
+			return timeDurationInLocalStorage[LocalStorageRouteKey];
+		}
+		return DefaultOptionsBasedOnRoute.default;
+	}, [LocalStorageRouteKey, timeDurationInLocalStorage]);
+
 	const [currentLocalStorageRouteKey, setCurrentLocalStorageRouteKey] = useState(
 		LocalStorageRouteKey,
 	);
+
 	const [customDTPickerVisible, setCustomDTPickerVisible] = useState(false);
-	const [timeInterval, setTimeInterval] = useState(defaultTime);
+	const [timeInterval, setTimeInterval] = useState(getDefaultTime());
 	const [startTime, setStartTime] = useState<moment.Moment | null>(null);
 	const [endTime, setEndTime] = useState<moment.Moment | null>(null);
 	const [refreshButtonHidden, setRefreshButtonHidden] = useState(false);
-	const [refreshText, setRefreshText] = useState("");
+	const [refreshText, setRefreshText] = useState('');
 	const [refreshButtonClick, setRefreshButtonClick] = useState(0);
 	const [form_dtselector] = Form.useForm();
 
-	const updateTimeOnQueryParamChange = () => {
+	const setToLocalStorage = useCallback(
+		(val: string) => {
+			let timeDurationInLocalStorageObj = cloneDeep(timeDurationInLocalStorage);
+			if (timeDurationInLocalStorageObj) {
+				timeDurationInLocalStorageObj[LocalStorageRouteKey] = val;
+			} else {
+				timeDurationInLocalStorageObj = {
+					[LocalStorageRouteKey]: val,
+				};
+			}
+			window.localStorage.setItem(
+				LOCAL_STORAGE.METRICS_TIME_IN_DURATION,
+				JSON.stringify(timeDurationInLocalStorageObj),
+			);
+		},
+		[LocalStorageRouteKey, timeDurationInLocalStorage],
+	);
+
+	const setMetricsTimeInterval = useCallback(
+		(value: string) => {
+			updateTimeInterval(value);
+			setTimeInterval(value);
+			setEndTime(null);
+			setStartTime(null);
+			setToLocalStorage(value);
+		},
+		[setToLocalStorage, updateTimeInterval],
+	);
+
+	const setCustomTime = useCallback(
+		(startTime: moment.Moment, endTime: moment.Moment) => {
+			updateTimeInterval('custom', [startTime.valueOf(), endTime.valueOf()]);
+			setEndTime(endTime);
+			setStartTime(startTime);
+		},
+		[updateTimeInterval],
+	);
+
+	const updateTimeOnQueryParamChange = useCallback(() => {
 		const urlParams = new URLSearchParams(location.search);
 		const intervalInQueryParam = urlParams.get(METRICS_PAGE_QUERY_PARAM.interval);
 		const startTimeString = urlParams.get(METRICS_PAGE_QUERY_PARAM.startTime);
@@ -79,7 +139,7 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 		) {
 			const startTime = moment(Number(startTimeString));
 			const endTime = moment(Number(endTimeString));
-			setCustomTime(startTime, endTime, true);
+			setCustomTime(startTime, endTime);
 		} else if (currentLocalStorageRouteKey !== LocalStorageRouteKey) {
 			setMetricsTimeInterval(defaultTime);
 			setCurrentLocalStorageRouteKey(LocalStorageRouteKey);
@@ -88,69 +148,73 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 		else if (intervalInQueryParam) {
 			setMetricsTimeInterval(intervalInQueryParam);
 		}
-	};
-
-	const setToLocalStorage = (val: string) => {
-		let timeDurationInLocalStorageObj = cloneDeep(timeDurationInLocalStorage);
-		if (timeDurationInLocalStorageObj) {
-			timeDurationInLocalStorageObj[LocalStorageRouteKey] = val;
-		} else {
-			timeDurationInLocalStorageObj = {
-				[LocalStorageRouteKey]: val,
-			};
-		}
-		window.localStorage.setItem(
-			LOCAL_STORAGE.METRICS_TIME_IN_DURATION,
-			JSON.stringify(timeDurationInLocalStorageObj),
-		);
-	};
+	}, [
+		LocalStorageRouteKey,
+		currentLocalStorageRouteKey,
+		setCustomTime,
+		defaultTime,
+		setMetricsTimeInterval,
+		location,
+	]);
 
 	useEffect(() => {
 		setMetricsTimeInterval(defaultTime);
-	}, []);
+	}, [defaultTime, setMetricsTimeInterval]);
 
 	// On URL Change
 	useEffect(() => {
 		updateTimeOnQueryParamChange();
-	}, [location]);
+	}, [location, updateTimeOnQueryParamChange]);
 
-	const setMetricsTimeInterval = (value: string) => {
-		props.updateTimeInterval(value);
-		setTimeInterval(value);
-		setEndTime(null);
-		setStartTime(null);
-		setToLocalStorage(value);
-	};
-	const setCustomTime = (
-		startTime: moment.Moment,
-		endTime: moment.Moment,
-		triggeredByURLChange = false,
-	) => {
-		props.updateTimeInterval("custom", [startTime.valueOf(), endTime.valueOf()]);
-		setEndTime(endTime);
-		setStartTime(startTime);
-	};
+	const updateUrlForTimeInterval = (value: string): void => {
+		const preSearch = new URLSearchParams(location.search);
 
-	const updateUrlForTimeInterval = (value: string) => {
-		props.history.push({
-			search: `?${METRICS_PAGE_QUERY_PARAM.interval}=${value}`,
+		const widgetId = preSearch.get('widgetId');
+		const graphType = preSearch.get('graphType');
+
+		let result = '';
+
+		if (widgetId !== null) {
+			result = result + `&widgetId=${widgetId}`;
+		}
+
+		if (graphType !== null) {
+			result = result + `&graphType=${graphType}`;
+		}
+
+		history.push({
+			search: `?${METRICS_PAGE_QUERY_PARAM.interval}=${value}${result}`,
 		}); //pass time in URL query param for all choices except custom in datetime picker
 	};
 
 	const updateUrlForCustomTime = (
 		startTime: moment.Moment,
 		endTime: moment.Moment,
-		triggeredByURLChange = false,
-	) => {
-		props.history.push(
+	): void => {
+		const preSearch = new URLSearchParams(location.search);
+
+		const widgetId = preSearch.get('widgetId');
+		const graphType = preSearch.get('graphType');
+
+		let result = '';
+
+		if (widgetId !== null) {
+			result = result + `&widgetId=${widgetId}`;
+		}
+
+		if (graphType !== null) {
+			result = result + `&graphType=${graphType}`;
+		}
+
+		history.push(
 			`?${METRICS_PAGE_QUERY_PARAM.startTime}=${startTime.valueOf()}&${
 				METRICS_PAGE_QUERY_PARAM.endTime
-			}=${endTime.valueOf()}`,
+			}=${endTime.valueOf()}${result}`,
 		);
 	};
 
-	const handleOnSelect = (value: string) => {
-		if (value === "custom") {
+	const handleOnSelect = (value: string): void => {
+		if (value === 'custom') {
 			setCustomDTPickerVisible(true);
 		} else {
 			updateUrlForTimeInterval(value);
@@ -159,7 +223,7 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 	};
 
 	//function called on clicking apply in customDateTimeModal
-	const handleCustomDate = (dateTimeRange: DateTimeRangeType) => {
+	const handleCustomDate = (dateTimeRange: DateTimeRangeType): void => {
 		// pass values in ms [minTime, maxTime]
 		if (
 			dateTimeRange !== null &&
@@ -175,17 +239,17 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 			setRefreshButtonHidden(true);
 			form_dtselector.setFieldsValue({
 				interval:
-					dateTimeRange[0].format("YYYY/MM/DD HH:mm") +
-					"-" +
-					dateTimeRange[1].format("YYYY/MM/DD HH:mm"),
+					dateTimeRange[0].format('YYYY/MM/DD HH:mm') +
+					'-' +
+					dateTimeRange[1].format('YYYY/MM/DD HH:mm'),
 			});
 		}
 		setCustomDTPickerVisible(false);
 	};
 
-	const timeSinceLastRefresh = () => {
+	const timeSinceLastRefresh = useCallback(() => {
 		const currentTime = moment();
-		const lastRefresh = moment(props.globalTime.maxTime / 1000000);
+		const lastRefresh = moment(globalTime.maxTime / 1000000);
 		const duration = moment.duration(currentTime.diff(lastRefresh));
 
 		const secondsDiff = Math.floor(duration.asSeconds());
@@ -198,48 +262,50 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 			return `Last refresh - ${minutedDiff} mins ago`;
 		}
 		return `Last refresh - ${secondsDiff} sec ago`;
-	};
+	}, [globalTime]);
 
-	const handleRefresh = () => {
+	const handleRefresh = (): void => {
 		setRefreshButtonClick(refreshButtonClick + 1);
 		setMetricsTimeInterval(timeInterval);
 	};
 
 	useEffect(() => {
-		setRefreshText("");
+		setRefreshText('');
 		const interval = setInterval(() => {
 			setRefreshText(timeSinceLastRefresh());
 		}, 2000);
-		return () => {
+		return (): void => {
 			clearInterval(interval);
 		};
-	}, [props.location, refreshButtonClick]);
+	}, [refreshButtonClick, timeSinceLastRefresh]);
 
-	if (props.location.pathname.startsWith(ROUTES.USAGE_EXPLORER)) {
-		return null;
+	if (history.location.pathname.startsWith(ROUTES.USAGE_EXPLORER)) {
+		return <></>;
 	} else {
 		const inputLabeLToShow =
 			startTime && endTime
-				? `${startTime.format("YYYY/MM/DD HH:mm")} - ${endTime.format(
-						"YYYY/MM/DD HH:mm",
+				? `${startTime.format('YYYY/MM/DD HH:mm')} - ${endTime.format(
+						'YYYY/MM/DD HH:mm',
 				  )}`
 				: timeInterval;
 
 		return (
 			<DateTimeWrapper>
-				<Space style={{ float: "right", display: "block" }}>
+				<Space style={{ float: 'right', display: 'block' }}>
 					<Space>
 						<Form
 							form={form_dtselector}
 							layout="inline"
-							initialValues={{ interval: "15min" }}
+							initialValues={{ interval: '15min' }}
 							style={{ marginTop: 10, marginBottom: 10 }}
 						>
-							<Select onSelect={handleOnSelect} value={inputLabeLToShow}>
+							<DefaultSelect onSelect={handleOnSelect} value={inputLabeLToShow}>
 								{options.map(({ value, label }) => (
-									<Option value={value}>{label}</Option>
+									<Option key={value + label} value={value}>
+										{label}
+									</Option>
 								))}
-							</Select>
+							</DefaultSelect>
 
 							<FormItem hidden={refreshButtonHidden} name="refresh_button">
 								<Button type="primary" onClick={handleRefresh}>
@@ -250,12 +316,12 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 					</Space>
 					<Space
 						style={{
-							float: "right",
-							display: "block",
+							float: 'right',
+							display: 'block',
 							marginRight: 20,
 							minHeight: 23,
 							width: 200,
-							textAlign: "right",
+							textAlign: 'right',
 						}}
 					>
 						{refreshText}
@@ -263,7 +329,7 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 					<CustomDateTimeModal
 						visible={customDTPickerVisible}
 						onCreate={handleCustomDate}
-						onCancel={() => {
+						onCancel={(): void => {
 							setCustomDTPickerVisible(false);
 						}}
 					/>
@@ -272,14 +338,12 @@ const _DateTimeSelector = (props: DateTimeSelectorProps) => {
 		);
 	}
 };
-const mapStateToProps = (state: StoreState): { globalTime: GlobalTime } => {
+const mapStateToProps = (state: AppState): { globalTime: GlobalTime } => {
 	return { globalTime: state.globalTime };
 };
 
-export const DateTimeSelector = withRouter(
-	connect(mapStateToProps, {
-		updateTimeInterval: updateTimeInterval,
-	})(_DateTimeSelector),
-);
+export const DateTimeSelector = connect(mapStateToProps, {
+	updateTimeInterval: updateTimeInterval,
+})(_DateTimeSelector);
 
 export default DateTimeSelector;

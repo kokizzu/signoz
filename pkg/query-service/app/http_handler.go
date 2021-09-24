@@ -7,8 +7,21 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/jmoiron/sqlx"
+	jsoniter "github.com/json-iterator/go"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/posthog/posthog-go"
+	"github.com/prometheus/prometheus/promql"
+	"go.signoz.io/query-service/app/dashboards"
+	"go.signoz.io/query-service/model"
 	"go.uber.org/zap"
+)
+
+type status string
+
+const (
+	statusSuccess status = "success"
+	statusError   status = "error"
 )
 
 // NewRouter creates and configures a Gorilla Router.
@@ -25,17 +38,30 @@ type APIHandler struct {
 	reader     *Reader
 	pc         *posthog.Client
 	distinctId string
+	db         *sqlx.DB
+	ready      func(http.HandlerFunc) http.HandlerFunc
 }
 
 // NewAPIHandler returns an APIHandler
-func NewAPIHandler(reader *Reader, pc *posthog.Client, distinctId string) *APIHandler {
+func NewAPIHandler(reader *Reader, pc *posthog.Client, distinctId string) (*APIHandler, error) {
+
 	aH := &APIHandler{
 		reader:     reader,
 		pc:         pc,
 		distinctId: distinctId,
 	}
+	aH.ready = aH.testReady
 
-	return aH
+	err := dashboards.InitDB("signoz.db")
+	if err != nil {
+		return nil, err
+	}
+
+	errReadingDashboards := dashboards.LoadDashboardFiles()
+	if errReadingDashboards != nil {
+		return nil, errReadingDashboards
+	}
+	return aH, nil
 }
 
 type structuredResponse struct {
@@ -52,10 +78,108 @@ type structuredError struct {
 	// TraceID ui.TraceID `json:"traceID,omitempty"`
 }
 
+var corsHeaders = map[string]string{
+	"Access-Control-Allow-Headers":  "Accept, Authorization, Content-Type, Origin",
+	"Access-Control-Allow-Methods":  "GET, OPTIONS",
+	"Access-Control-Allow-Origin":   "*",
+	"Access-Control-Expose-Headers": "Date",
+}
+
+// Enables cross-site script calls.
+func setCORS(w http.ResponseWriter) {
+	for h, v := range corsHeaders {
+		w.Header().Set(h, v)
+	}
+}
+
+type apiFunc func(r *http.Request) (interface{}, *model.ApiError, func())
+
+// Checks if server is ready, calls f if it is, returns 503 if it is not.
+func (aH *APIHandler) testReady(f http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		f(w, r)
+
+	}
+}
+
+type response struct {
+	Status    status          `json:"status"`
+	Data      interface{}     `json:"data,omitempty"`
+	ErrorType model.ErrorType `json:"errorType,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
+func (aH *APIHandler) respondError(w http.ResponseWriter, apiErr *model.ApiError, data interface{}) {
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
+	b, err := json.Marshal(&response{
+		Status:    statusError,
+		ErrorType: apiErr.Typ,
+		Error:     apiErr.Err.Error(),
+		Data:      data,
+	})
+	if err != nil {
+		zap.S().Error("msg", "error marshalling json response", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var code int
+	switch apiErr.Typ {
+	case model.ErrorBadData:
+		code = http.StatusBadRequest
+	case model.ErrorExec:
+		code = 422
+	case model.ErrorCanceled, model.ErrorTimeout:
+		code = http.StatusServiceUnavailable
+	case model.ErrorInternal:
+		code = http.StatusInternalServerError
+	case model.ErrorNotFound:
+		code = http.StatusNotFound
+	case model.ErrorNotImplemented:
+		code = http.StatusNotImplemented
+	default:
+		code = http.StatusInternalServerError
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if n, err := w.Write(b); err != nil {
+		zap.S().Error("msg", "error writing response", "bytesWritten", n, "err", err)
+	}
+}
+
+func (aH *APIHandler) respond(w http.ResponseWriter, data interface{}) {
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
+	b, err := json.Marshal(&response{
+		Status: statusSuccess,
+		Data:   data,
+	})
+	if err != nil {
+		zap.S().Error("msg", "error marshalling json response", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if n, err := w.Write(b); err != nil {
+		zap.S().Error("msg", "error writing response", "bytesWritten", n, "err", err)
+	}
+}
+
 // RegisterRoutes registers routes for this handler on the given router
 func (aH *APIHandler) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/api/v1/query_range", aH.queryRangeMetrics).Methods(http.MethodGet)
+	router.HandleFunc("/api/v1/query", aH.queryMetrics).Methods(http.MethodGet)
 
-	router.HandleFunc("/api/v1/user", aH.user).Methods(http.MethodGet)
+	router.HandleFunc("/api/v1/dashboards", aH.getDashboards).Methods(http.MethodGet)
+	router.HandleFunc("/api/v1/dashboards", aH.createDashboards).Methods(http.MethodPost)
+	router.HandleFunc("/api/v1/dashboards/{uuid}", aH.getDashboard).Methods(http.MethodGet)
+	router.HandleFunc("/api/v1/dashboards/{uuid}", aH.updateDashboard).Methods(http.MethodPut)
+	router.HandleFunc("/api/v1/dashboards/{uuid}", aH.deleteDashboard).Methods(http.MethodDelete)
+
+	router.HandleFunc("/api/v1/user", aH.user).Methods(http.MethodPost)
 	// router.HandleFunc("/api/v1/get_percentiles", aH.getApplicationPercentiles).Methods(http.MethodGet)
 	router.HandleFunc("/api/v1/services", aH.getServices).Methods(http.MethodGet)
 	router.HandleFunc("/api/v1/services/list", aH.getServicesList).Methods(http.MethodGet)
@@ -72,6 +196,265 @@ func (aH *APIHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/api/v1/traces/{traceId}", aH.searchTraces).Methods(http.MethodGet)
 	router.HandleFunc("/api/v1/usage", aH.getUsage).Methods(http.MethodGet)
 	router.HandleFunc("/api/v1/serviceMapDependencies", aH.serviceMapDependencies).Methods(http.MethodGet)
+}
+
+func Intersection(a, b []int) (c []int) {
+	m := make(map[int]bool)
+
+	for _, item := range a {
+		m[item] = true
+	}
+
+	for _, item := range b {
+		if _, ok := m[item]; ok {
+			c = append(c, item)
+		}
+	}
+	return
+}
+
+func (aH *APIHandler) getDashboards(w http.ResponseWriter, r *http.Request) {
+
+	allDashboards, err := dashboards.GetDashboards()
+
+	if err != nil {
+		aH.respondError(w, err, nil)
+		return
+	}
+	tagsFromReq, ok := r.URL.Query()["tags"]
+	if !ok || len(tagsFromReq) == 0 || tagsFromReq[0] == "" {
+		aH.respond(w, &allDashboards)
+		return
+	}
+
+	tags2Dash := make(map[string][]int)
+	for i := 0; i < len(*allDashboards); i++ {
+		tags, ok := (*allDashboards)[i].Data["tags"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		tagsArray := make([]string, len(tags))
+		for i, v := range tags {
+			tagsArray[i] = v.(string)
+		}
+
+		for _, tag := range tagsArray {
+			tags2Dash[tag] = append(tags2Dash[tag], i)
+		}
+
+	}
+
+	inter := make([]int, len(*allDashboards))
+	for i := range inter {
+		inter[i] = i
+	}
+
+	for _, tag := range tagsFromReq {
+		inter = Intersection(inter, tags2Dash[tag])
+	}
+
+	filteredDashboards := []dashboards.Dashboard{}
+	for _, val := range inter {
+		dash := (*allDashboards)[val]
+		filteredDashboards = append(filteredDashboards, dash)
+	}
+
+	aH.respond(w, &filteredDashboards)
+
+}
+func (aH *APIHandler) deleteDashboard(w http.ResponseWriter, r *http.Request) {
+
+	uuid := mux.Vars(r)["uuid"]
+	err := dashboards.DeleteDashboard(uuid)
+
+	if err != nil {
+		aH.respondError(w, err, nil)
+		return
+	}
+
+	aH.respond(w, nil)
+
+}
+
+func (aH *APIHandler) updateDashboard(w http.ResponseWriter, r *http.Request) {
+
+	uuid := mux.Vars(r)["uuid"]
+
+	var postData map[string]interface{}
+	err := json.NewDecoder(r.Body).Decode(&postData)
+	if err != nil {
+		aH.respondError(w, &model.ApiError{Typ: model.ErrorBadData, Err: err}, "Error reading request body")
+		return
+	}
+	err = dashboards.IsPostDataSane(&postData)
+	if err != nil {
+		aH.respondError(w, &model.ApiError{Typ: model.ErrorBadData, Err: err}, "Error reading request body")
+		return
+	}
+
+	if postData["uuid"] != uuid {
+		aH.respondError(w, &model.ApiError{Typ: model.ErrorBadData, Err: fmt.Errorf("uuid in request param and uuid in request body do not match")}, "Error reading request body")
+		return
+	}
+
+	dashboard, apiError := dashboards.UpdateDashboard(&postData)
+
+	if apiError != nil {
+		aH.respondError(w, apiError, nil)
+		return
+	}
+
+	aH.respond(w, dashboard)
+
+}
+
+func (aH *APIHandler) getDashboard(w http.ResponseWriter, r *http.Request) {
+
+	uuid := mux.Vars(r)["uuid"]
+
+	dashboard, apiError := dashboards.GetDashboard(uuid)
+
+	if apiError != nil {
+		aH.respondError(w, apiError, nil)
+		return
+	}
+
+	aH.respond(w, dashboard)
+
+}
+
+func (aH *APIHandler) createDashboards(w http.ResponseWriter, r *http.Request) {
+
+	var postData map[string]interface{}
+	err := json.NewDecoder(r.Body).Decode(&postData)
+	if err != nil {
+		aH.respondError(w, &model.ApiError{Typ: model.ErrorInternal, Err: err}, "Error reading request body")
+		return
+	}
+	err = dashboards.IsPostDataSane(&postData)
+	if err != nil {
+		aH.respondError(w, &model.ApiError{Typ: model.ErrorInternal, Err: err}, "Error reading request body")
+		return
+	}
+
+	dash, apiErr := dashboards.CreateDashboard(&postData)
+
+	if apiErr != nil {
+		aH.respondError(w, apiErr, nil)
+		return
+	}
+
+	aH.respond(w, dash)
+
+}
+
+func (aH *APIHandler) queryRangeMetrics(w http.ResponseWriter, r *http.Request) {
+
+	query, apiErrorObj := parseQueryRangeRequest(r)
+
+	if apiErrorObj != nil {
+		aH.respondError(w, apiErrorObj, nil)
+		return
+	}
+
+	// zap.S().Info(query, apiError)
+
+	ctx := r.Context()
+	if to := r.FormValue("timeout"); to != "" {
+		var cancel context.CancelFunc
+		timeout, err := parseMetricsDuration(to)
+		if aH.handleError(w, err, http.StatusBadRequest) {
+			return
+		}
+
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	res, qs, apiError := (*aH.reader).GetQueryRangeResult(ctx, query)
+
+	if apiError != nil {
+		aH.respondError(w, apiError, nil)
+		return
+	}
+
+	if res.Err != nil {
+		zap.S().Error(res.Err)
+	}
+
+	if res.Err != nil {
+		switch res.Err.(type) {
+		case promql.ErrQueryCanceled:
+			aH.respondError(w, &model.ApiError{model.ErrorCanceled, res.Err}, nil)
+		case promql.ErrQueryTimeout:
+			aH.respondError(w, &model.ApiError{model.ErrorTimeout, res.Err}, nil)
+		}
+		aH.respondError(w, &model.ApiError{model.ErrorExec, res.Err}, nil)
+	}
+
+	response_data := &model.QueryData{
+		ResultType: res.Value.Type(),
+		Result:     res.Value,
+		Stats:      qs,
+	}
+
+	aH.respond(w, response_data)
+
+}
+
+func (aH *APIHandler) queryMetrics(w http.ResponseWriter, r *http.Request) {
+
+	queryParams, apiErrorObj := parseInstantQueryMetricsRequest(r)
+
+	if apiErrorObj != nil {
+		aH.respondError(w, apiErrorObj, nil)
+		return
+	}
+
+	// zap.S().Info(query, apiError)
+
+	ctx := r.Context()
+	if to := r.FormValue("timeout"); to != "" {
+		var cancel context.CancelFunc
+		timeout, err := parseMetricsDuration(to)
+		if aH.handleError(w, err, http.StatusBadRequest) {
+			return
+		}
+
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	res, qs, apiError := (*aH.reader).GetInstantQueryMetricsResult(ctx, queryParams)
+
+	if apiError != nil {
+		aH.respondError(w, apiError, nil)
+		return
+	}
+
+	if res.Err != nil {
+		zap.S().Error(res.Err)
+	}
+
+	if res.Err != nil {
+		switch res.Err.(type) {
+		case promql.ErrQueryCanceled:
+			aH.respondError(w, &model.ApiError{model.ErrorCanceled, res.Err}, nil)
+		case promql.ErrQueryTimeout:
+			aH.respondError(w, &model.ApiError{model.ErrorTimeout, res.Err}, nil)
+		}
+		aH.respondError(w, &model.ApiError{model.ErrorExec, res.Err}, nil)
+	}
+
+	response_data := &model.QueryData{
+		ResultType: res.Value.Type(),
+		Result:     res.Value,
+		Stats:      qs,
+	}
+
+	aH.respond(w, response_data)
+
 }
 
 func (aH *APIHandler) user(w http.ResponseWriter, r *http.Request) {

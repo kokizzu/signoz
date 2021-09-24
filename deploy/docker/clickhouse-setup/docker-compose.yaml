@@ -12,6 +12,8 @@ services:
       volumes:
         - ./clickhouse-config.xml:/etc/clickhouse-server/config.xml
         - ./docker-entrypoint-initdb.d/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+        - ./data/clickhouse/:/var/lib/clickhouse/
+
       healthcheck:
         # "clickhouse", "client", "-u ${CLICKHOUSE_USER}", "--password ${CLICKHOUSE_PASSWORD}", "-q 'SELECT 1'"
         test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
@@ -20,23 +22,27 @@ services:
         retries: 3
 
   query-service:
-    image: signoz/query-service:0.3.1
+    image: signoz/query-service:0.4.0
     container_name: query-service
-
+    command: ["-config=/root/config/prometheus.yml"]
     ports:
       - "8080:8080"
+    volumes:
+      - ./prometheus.yml:/root/config/prometheus.yml
+      - ../dashboards:/root/config/dashboards
 
     environment:
       - ClickHouseUrl=tcp://clickhouse:9000
       - STORAGE=clickhouse
       - POSTHOG_API_KEY=H-htDCae7CR3RV57gUzmol6IAKtm5IMCvbcm_fwnL-w
+      - GODEBUG=netdns=go
 
     depends_on:
       clickhouse:
         condition: service_healthy
     
   frontend:
-    image: signoz/frontend:0.3.2
+    image: signoz/frontend:0.4.0
     container_name: frontend
 
     depends_on:
@@ -50,7 +56,7 @@ services:
 
 
   otel-collector:
-    image: signoz/otelcol:latest
+    image: signoz/otelcontribcol:0.4.0
     command: ["--config=/etc/otel-collector-config.yaml", "--mem-ballast-size-mib=683"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml

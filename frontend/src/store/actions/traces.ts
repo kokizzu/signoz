@@ -1,10 +1,10 @@
-import { ActionTypes } from "./types";
-import api, { apiV1 } from "../../api";
+import api from 'api';
+import ROUTES from 'constants/routes';
+import { Dispatch } from 'redux';
+import { toUTCEpoch } from 'utils/timeUtils';
 
-import { Dispatch } from "redux";
-import { GlobalTime } from "./global";
-import { toUTCEpoch } from "../../utils/timeUtils";
-import ROUTES from "Src/constants/routes";
+import { GlobalTime } from './global';
+import { ActionTypes } from './types';
 
 // PNOTE
 // define trace interface - what it should return
@@ -120,16 +120,16 @@ export interface FetchTraceItemAction {
 }
 
 export const fetchTraces = (globalTime: GlobalTime, filter_params: string) => {
-	return async (dispatch: Dispatch) => {
+	return async (dispatch: Dispatch): void => {
 		if (globalTime) {
-			let request_string =
-				"/spans?limit=100&lookback=2d&start=" +
+			const request_string =
+				'/spans?limit=100&lookback=2d&start=' +
 				toUTCEpoch(globalTime.minTime) +
-				"&end=" +
+				'&end=' +
 				toUTCEpoch(globalTime.maxTime) +
-				"&" +
+				'&' +
 				filter_params;
-			const response = await api.get<traceResponseNew>(apiV1 + request_string);
+			const response = await api.get<traceResponseNew>(request_string);
 
 			dispatch<FetchTracesAction>({
 				type: ActionTypes.fetchTraces,
@@ -141,11 +141,9 @@ export const fetchTraces = (globalTime: GlobalTime, filter_params: string) => {
 };
 
 export const fetchTraceItem = (traceID: string) => {
-	return async (dispatch: Dispatch) => {
-		let request_string = ROUTES.TRACES + "/" + traceID;
-		const response = await api.get<spansWSameTraceIDResponse>(
-			apiV1 + request_string,
-		);
+	return async (dispatch: Dispatch): Promise<void> => {
+		const request_string = ROUTES.TRACES + '/' + traceID;
+		const response = await api.get<spansWSameTraceIDResponse>(request_string);
 
 		dispatch<FetchTraceItemAction>({
 			type: ActionTypes.fetchTraceItem,

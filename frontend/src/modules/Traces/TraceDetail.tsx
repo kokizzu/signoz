@@ -1,15 +1,16 @@
-import React from "react";
-import { TraceCustomVisualizations } from "./TraceCustomVisualizations";
-import { TraceFilter } from "./TraceFilter";
-import { TraceList } from "./TraceList";
+import React from 'react';
 
-const TraceDetail = () => {
+import { TraceCustomVisualizations } from './TraceCustomVisualizations';
+import { TraceFilter } from './TraceFilter';
+import { TraceList } from './TraceList';
+
+const TraceDetail = (): JSX.Element => {
 	return (
-		<div>
+		<>
 			<TraceFilter />
 			<TraceCustomVisualizations />
 			<TraceList />
-		</div>
+		</>
 	);
 };
 

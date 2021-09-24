@@ -1,8 +1,15 @@
 FROM golang:1.14-buster AS builder
-ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
+
+# Add Maintainer Info
+LABEL maintainer="signoz"
+
+ARG TARGETPLATFORM
+
+ENV CGO_ENABLED=1
 ENV GOPATH=/go
+
+RUN export GOOS=$(echo ${TARGETPLATFORM} | cut -d / -f1) && \
+    export GOARCH=$(echo ${TARGETPLATFORM} | cut -d / -f2)
 
 # Prepare and enter src directory
 WORKDIR /go/src/github.com/signoz/signoz/pkg/query-service
@@ -14,7 +21,7 @@ RUN go mod download -x
 
 # Add the sources and proceed with build
 ADD . .
-RUN go build -o ./bin/query-service ./main.go
+RUN go build -a -ldflags "-linkmode external -extldflags '-static' -s -w" -o ./bin/query-service ./main.go
 RUN chmod +x ./bin/query-service
 
 # use a minimal alpine image
@@ -25,6 +32,12 @@ RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 WORKDIR /root
 # copy the binary from builder
 COPY --from=builder /go/src/github.com/signoz/signoz/pkg/query-service/bin/query-service .
+
+COPY config/prometheus.yml /root/config/prometheus.yml
+
 # run the binary
-CMD ["./query-service"]
+ENTRYPOINT ["./query-service"]
+CMD ["-config", "/root/config/prometheus.yml"]
+# CMD ["./query-service -config /root/config/prometheus.yml"]
+EXPOSE 8080
 

@@ -1,8 +1,8 @@
-import React, { useState } from "react";
-import { Modal, DatePicker } from "antd";
-import { DateTimeRangeType } from "../../../store/actions";
-import { Moment } from "moment";
-import moment from "moment";
+import { DatePicker, Modal } from 'antd';
+import { Moment } from 'moment';
+import moment from 'moment';
+import React, { useState } from 'react';
+import { DateTimeRangeType } from 'store/actions';
 
 const { RangePicker } = DatePicker;
 
@@ -18,17 +18,15 @@ const CustomDateTimeModal: React.FC<CustomDateTimeModalProps> = ({
 	onCreate,
 	onCancel,
 }) => {
-	// RangeValue<Moment> == [Moment|null,Moment|null]|null
-
 	const [
 		customDateTimeRange,
 		setCustomDateTimeRange,
 	] = useState<DateTimeRangeType>();
 
-	function handleRangePickerOk(date_time: DateTimeRangeType) {
+	function handleRangePickerOk(date_time: DateTimeRangeType): void {
 		setCustomDateTimeRange(date_time);
 	}
-	function disabledDate(current: Moment) {
+	function disabledDate(current: Moment): boolean {
 		if (current > moment()) {
 			return true;
 		} else {
@@ -43,8 +41,8 @@ const CustomDateTimeModal: React.FC<CustomDateTimeModalProps> = ({
 			okText="Apply"
 			cancelText="Cancel"
 			onCancel={onCancel}
-			style={{ position: "absolute", top: 60, right: 40 }}
-			onOk={() => onCreate(customDateTimeRange ? customDateTimeRange : null)}
+			style={{ position: 'absolute', top: 60, right: 40 }}
+			onOk={(): void => onCreate(customDateTimeRange ? customDateTimeRange : null)}
 		>
 			<RangePicker
 				disabledDate={disabledDate}
